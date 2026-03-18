@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>RAR 7.20 Command Builder</title>
+<style>
+:root{--bg:#f4f5f9;--card:#fff;--border:#d4d8e3;--accent:#2563eb;--muted:#6b7280;--heading:#1e293b;--row:#f9fafb}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:#111;padding:16px}
+h1{font-size:22px;color:var(--heading);margin-bottom:12px}
+.top{display:flex;flex-wrap:wrap;gap:10px;align-items:end;margin-bottom:14px}
+.top label{font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:3px}
+.top select,.top input[type=text]{padding:7px 10px;border:1px solid var(--border);border-radius:8px;font-size:14px}
+.top select{min-width:180px}
+.top input[type=text]{width:220px}
+.sections{display:flex;flex-direction:column;gap:12px;margin-bottom:14px}
+.section{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.04)}
+.section summary{padding:10px 14px;font-weight:600;font-size:14px;cursor:pointer;user-select:none;color:var(--heading);background:var(--row);list-style:none}
+.section summary::before{content:"\25B8  "}
+.section[open] summary::before{content:"\25BE  "}
+.section-body{padding:8px 14px 12px}
+.opt-row{display:flex;align-items:center;gap:8px;padding:5px 0;flex-wrap:wrap;transition:opacity .15s}
+.opt-row.hidden{display:none}
+.opt-row label{font-size:13px;cursor:pointer;display:flex;align-items:center;gap:5px;min-width:280px}
+.opt-row label code{background:#e8ecf4;padding:1px 5px;border-radius:4px;font-size:12px;color:#374151}
+.opt-row input[type=text],.opt-row select{padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px}
+.opt-row input[type=text]{width:160px}
+.cmd-box{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;box-shadow:0 2px 8px rgba(0,0,0,.04)}
+.cmd-box textarea{width:100%;min-height:72px;border:1px solid var(--border);border-radius:8px;padding:10px;font-family:"Cascadia Code","Fira Code",monospace;font-size:14px;resize:vertical;background:#f8f9fc}
+.cmd-box .bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.cmd-box .bar span{font-weight:600;font-size:14px;color:var(--heading)}
+.btn{padding:6px 14px;border:none;border-radius:8px;font-size:13px;cursor:pointer;background:var(--accent);color:#fff}
+.btn:hover{opacity:.9}
+.copied{background:#16a34a}
+</style>
+</head>
+<body>
+<h1>RAR 7.20 Command-Line Builder</h1>
+
+<div class="top">
+  <label>Command
+    <select id="cmdSel"></select>
+  </label>
+  <label id="archLbl">Archive name
+    <input type="text" id="archName" placeholder="archive.rar"/>
+  </label>
+  <label id="arch2Lbl" style="display:none">Second archive
+    <input type="text" id="arch2Name" placeholder="archive2.rar"/>
+  </label>
+  <label id="filesLbl">Files / paths
+    <input type="text" id="filePaths" placeholder="*.* or file1 file2"/>
+  </label>
+  <label id="destLbl" style="display:none">Destination path
+    <input type="text" id="destPath" placeholder="C:\\Output\\"/>
+  </label>
+</div>
+
+<div class="sections" id="sections"></div>
+
+<div class="cmd-box">
+  <div class="bar"><span>Generated command</span><button class="btn" id="copyBtn">Copy</button></div>
+  <textarea id="cmdOut" readonly></textarea>
+</div>
+
+<script>
+var COMMANDS=[
+  {v:"a",  d:"Add files to archive"},
+  {v:"c",  d:"Add archive comment"},
+  {v:"ch", d:"Change archive parameters"},
+  {v:"cw", d:"Write archive comment to file"},
+  {v:"d",  d:"Delete files from archive"},
+  {v:"e",  d:"Extract without archived paths"},
+  {v:"f",  d:"Freshen files in archive"},
+  {v:"i",  d:"Find string in archives"},
+  {v:"k",  d:"Lock archive"},
+  {v:"l",  d:"List archive contents [short]"},
+  {v:"lt", d:"List archive contents [technical]"},
+  {v:"lb", d:"List archive contents [bare]"},
+  {v:"m",  d:"Move to archive"},
+  {v:"mf", d:"Move to archive (files only)"},
+  {v:"p",  d:"Print file to stdout"},
+  {v:"r",  d:"Repair archive"},
+  {v:"rc", d:"Reconstruct missing volumes"},
+  {v:"rn", d:"Rename archived files"},
+  {v:"rr", d:"Add data recovery record"},
+  {v:"rv", d:"Create recovery volumes"},
+  {v:"s",  d:"Convert archive to SFX"},
+  {v:"s-", d:"Convert SFX back to archive"},
+  {v:"t",  d:"Test archive files"},
+  {v:"u",  d:"Update files in archive"},
+  {v:"v",  d:"Verbosely list contents"},
+  {v:"vt", d:"Verbosely list [technical]"},
+  {v:"vb", d:"Verbosely list [bare]"},
+  {v:"x",  d:"Extract files with full path"}
+];
+
+/* ── Per-command field config ── */
+var CMD_FIELDS={
+  a:   {arch:'Archive name',archPh:'archive.rar',         files:'Files / paths',filesPh:'*.* or file1 file2'},
+  c:   {arch:'Archive name',archPh:'archive.rar',         files:null},
+  ch:  {arch:'Archive name',archPh:'archive.rar',         files:null},
+  cw:  {arch:'Archive name',archPh:'archive.rar',         files:'Output file',filesPh:'comment.txt'},
+  d:   {arch:'Archive name',archPh:'archive.rar',         files:'Files to delete',filesPh:'file1 file2'},
+  e:   {arch:'Archive name',archPh:'archive.rar',         files:'Files (optional)',filesPh:'*.doc',dest:'Destination path',destPh:'C:\\Output\\'},
+  f:   {arch:'Archive name',archPh:'archive.rar',         files:'Files / paths',filesPh:'*.* or file1 file2'},
+  i:   {arch:'Search string',archPh:'search text',        files:'Archive masks',filesPh:'*.rar'},
+  k:   {arch:'Archive name',archPh:'archive.rar',         files:null},
+  l:   {arch:'Archive name',archPh:'archive.rar',         files:'Files (optional)',filesPh:'*.doc'},
+  lt:  {arch:'Archive name',archPh:'archive.rar',         files:'Files (optional)',filesPh:'*.doc'},
+  lb:  {arch:'Archive name',archPh:'archive.rar',         files:'Files (optional)',filesPh:'*.doc'},
+  m:   {arch:'Archive name',archPh:'archive.rar',         files:'Files / paths',filesPh:'*.* or file1 file2'},
+  mf:  {arch:'Archive name',archPh:'archive.rar',         files:'Files / paths',filesPh:'*.* or file1 file2'},
+  p:   {arch:'Archive name',archPh:'archive.rar',         files:'Files (optional)',filesPh:'*.doc'},
+  r:   {arch:'Archive name',archPh:'archive.rar',         files:null},
+  rc:  {arch:'Archive name',archPh:'archive.rar',         files:null},
+  rn:  {arch:'Archive name',archPh:'archive.rar',         files:'Old New pairs',filesPh:'old_name new_name ...'},
+  rr:  {arch:'Archive name',archPh:'archive.rar',         files:null},
+  rv:  {arch:'Archive name',archPh:'archive.rar',         files:null},
+  s:   {arch:'Archive name',archPh:'archive.rar',         files:null},
+  's-':{arch:'Archive name',archPh:'archive.rar',         files:null},
+  t:   {arch:'Archive name',archPh:'archive.rar',         files:'Files (optional)',filesPh:'*.doc'},
+  u:   {arch:'Archive name',archPh:'archive.rar',         files:'Files / paths',filesPh:'*.* or file1 file2'},
+  v:   {arch:'Archive name',archPh:'archive.rar',         files:'Files (optional)',filesPh:'*.doc'},
+  vt:  {arch:'Archive name',archPh:'archive.rar',         files:'Files (optional)',filesPh:'*.doc'},
+  vb:  {arch:'Archive name',archPh:'archive.rar',         files:'Files (optional)',filesPh:'*.doc'},
+  x:   {arch:'Archive name',archPh:'archive.rar',         files:'Files (optional)',filesPh:'*.doc',dest:'Destination path',destPh:'C:\\Output\\'}
+};
+
+/* shorthand groups */
+var C='a m mf u f'.split(' ');        /* create/update */
+var X='e x'.split(' ');               /* extract */
+var L='l lt lb v vt vb'.split(' ');   /* list */
+var CX=C.concat(X);                  /* create + extract */
+var CXL=CX.concat(L);                /* create + extract + list */
+var CXT=CX.concat(['t']);             /* create + extract + test */
+var CXLT=CXL.concat(['t']);           /* create + extract + list + test */
+var ALL=COMMANDS.map(function(c){return c.v;});
+
+var SWITCHES=[
+{cat:"General", sw:"-r",   d:"Recurse subdirectories",            type:"flag",  cmds:CXLT.concat(['d'])},
+{cat:"General", sw:"-r-",  d:"Disable recursion",                 type:"flag",  cmds:CXLT.concat(['d'])},
+{cat:"General", sw:"-r0",  d:"Recurse for wildcard names only",   type:"flag",  cmds:CXLT.concat(['d'])},
+{cat:"General", sw:"-y",   d:"Assume Yes on all queries",         type:"flag",  cmds:CXT.concat(['d','ch'])},
+{cat:"General", sw:"-c-",  d:"Disable comments show",             type:"flag",  cmds:X.concat(['t'])},
+{cat:"General", sw:"-cfg-",d:"Disable read configuration",        type:"flag",  cmds:ALL},
+{cat:"General", sw:"-inul",d:"Disable all messages",              type:"flag",  cmds:ALL},
+{cat:"General", sw:"-iver",d:"Display version number",            type:"flag",  cmds:ALL},
+{cat:"General", sw:"-k",   d:"Lock archive",                      type:"flag",  cmds:C},
+{cat:"General", sw:"-kb",  d:"Keep broken extracted files",       type:"flag",  cmds:X},
+{cat:"General", sw:"-or",  d:"Rename files automatically",        type:"flag",  cmds:X},
+{cat:"General", sw:"-vp",  d:"Pause before each volume",          type:"flag",  cmds:X},
+{cat:"General", sw:"-vn",  d:"Old-style volume naming scheme",    type:"flag",  cmds:C},
+
+{cat:"Compression", sw:"-m",  d:"Compression method", type:"select", cmds:C,
+ opts:[{v:"0",l:"0 - Store"},{v:"1",l:"1 - Fastest"},{v:"2",l:"2 - Fast"},{v:"3",l:"3 - Normal"},{v:"4",l:"4 - Good"},{v:"5",l:"5 - Best"}]},
+{cat:"Compression", sw:"-ma", d:"Archive format version", type:"select", cmds:C,
+ opts:[{v:"4",l:"4 - RAR 4"},{v:"5",l:"5 - RAR 5 (default)"},{v:"7",l:"7 - RAR 7"}]},
+{cat:"Compression", sw:"-md", d:"Dictionary size (e.g. 32m, 1g)", type:"text", ph:"32m", cmds:C},
+{cat:"Compression", sw:"-mc", d:"Advanced compression parameters", type:"text", ph:"parameters", cmds:C},
+{cat:"Compression", sw:"-mt", d:"Number of threads",              type:"text", ph:"4",    cmds:CXT},
+{cat:"Compression", sw:"-ms", d:"File types to store (ext;ext)",  type:"text", ph:"jpg;mp3;avi", cmds:C},
+{cat:"Compression", sw:"-s",  d:"Create solid archive",           type:"flag",  cmds:'a m mf u'.split(' ')},
+{cat:"Compression", sw:"-ds", d:"Disable name sort (solid)",      type:"flag",  cmds:'a m mf u'.split(' ')},
+{cat:"Compression", sw:"-en", d:"Do not put end-of-archive block",type:"flag",  cmds:'a m mf u'.split(' ')},
+{cat:"Compression", sw:"-t",  d:"Test files after archiving",     type:"flag",  cmds:C},
+
+{cat:"Encryption", sw:"-p",  d:"Set password",                     type:"text", ph:"password", cmds:CXLT.concat(['p'])},
+{cat:"Encryption", sw:"-hp", d:"Encrypt data + headers (password)",type:"text", ph:"password", cmds:CXT},
+{cat:"Encryption", sw:"-me", d:"Encryption parameters",            type:"text", ph:"parameters", cmds:C},
+{cat:"Encryption", sw:"-ht", d:"Hash type", type:"select", cmds:C,
+ opts:[{v:"b",l:"b - BLAKE2"},{v:"c",l:"c - CRC32"}]},
+
+{cat:"Paths & Names", sw:"-ap", d:"Set path inside archive",        type:"text", ph:"path\\inside", cmds:C.concat(X)},
+{cat:"Paths & Names", sw:"-ep", d:"Exclude paths from names",       type:"flag",  cmds:C},
+{cat:"Paths & Names", sw:"-ep1",d:"Exclude base dir from names",    type:"flag",  cmds:C},
+{cat:"Paths & Names", sw:"-ep2",d:"Expand paths to full",           type:"flag",  cmds:C},
+{cat:"Paths & Names", sw:"-ep3",d:"Full paths including drive letter",type:"flag",cmds:C},
+{cat:"Paths & Names", sw:"-cl", d:"Convert names to lower case",    type:"flag",  cmds:C},
+{cat:"Paths & Names", sw:"-cu", d:"Convert names to upper case",    type:"flag",  cmds:C},
+{cat:"Paths & Names", sw:"-ad", d:"Append archive name to dest path",type:"flag", cmds:X},
+{cat:"Paths & Names", sw:"-ad1",d:"Do not create dest folder prefix",type:"flag",cmds:X},
+{cat:"Paths & Names", sw:"-ad2",d:"Use archive name subfolder",     type:"flag",  cmds:X},
+
+{cat:"File Selection", sw:"-n",  d:"Include filter mask",           type:"text", ph:"*.doc",       cmds:CXLT.concat(['d'])},
+{cat:"File Selection", sw:"-n@", d:"Include masks from list file",  type:"text", ph:"listfile.txt",cmds:CXLT.concat(['d'])},
+{cat:"File Selection", sw:"-x",  d:"Exclude file mask",             type:"text", ph:"*.bak",       cmds:CXLT.concat(['d'])},
+{cat:"File Selection", sw:"-x@", d:"Exclude list file",             type:"text", ph:"excludelist.txt",cmds:CXLT.concat(['d'])},
+{cat:"File Selection", sw:"-ed", d:"Do not add empty directories",  type:"flag",  cmds:C},
+{cat:"File Selection", sw:"-e+", d:"Include files with attribute",  type:"text", ph:"attr",        cmds:C},
+{cat:"File Selection", sw:"-ai", d:"Ignore file attributes",        type:"flag",  cmds:CX},
+{cat:"File Selection", sw:"-sl", d:"Size less than (bytes)",        type:"text", ph:"1000000",     cmds:CX},
+{cat:"File Selection", sw:"-sm", d:"Size more than (bytes)",        type:"text", ph:"0",           cmds:CX},
+
+{cat:"Date & Time", sw:"-ta",  d:"Files modified after date",       type:"text", ph:"YYYYMMDDHHMMSS", cmds:CXLT.concat(['d'])},
+{cat:"Date & Time", sw:"-tb",  d:"Files modified before date",      type:"text", ph:"YYYYMMDDHHMMSS", cmds:CXLT.concat(['d'])},
+{cat:"Date & Time", sw:"-tn",  d:"Files newer than period",         type:"text", ph:"15d",            cmds:CXLT.concat(['d'])},
+{cat:"Date & Time", sw:"-to",  d:"Files older than period",         type:"text", ph:"30d",            cmds:CXLT.concat(['d'])},
+{cat:"Date & Time", sw:"-ts",  d:"Save/restore file time",          type:"text", ph:"m,c,a,p",       cmds:CX},
+{cat:"Date & Time", sw:"-tk",  d:"Keep original archive time",      type:"flag",  cmds:C},
+{cat:"Date & Time", sw:"-tl",  d:"Set archive time to latest file", type:"flag",  cmds:C},
+{cat:"Date & Time", sw:"-ag",  d:"Generate name using date format", type:"text", ph:"YYYYMMDD",      cmds:'a m mf u'.split(' ')},
+
+{cat:"Archive & Volumes", sw:"-v",   d:"Volume size (e.g. 100m)",   type:"text", ph:"100m",        cmds:'a m mf u'.split(' ')},
+{cat:"Archive & Volumes", sw:"-rr",  d:"Recovery record (%/sectors)",type:"text", ph:"3p",          cmds:C.concat(['ch'])},
+{cat:"Archive & Volumes", sw:"-rv",  d:"Recovery volumes count",     type:"text", ph:"3",            cmds:C},
+{cat:"Archive & Volumes", sw:"-sfx", d:"Create SFX (module name)",   type:"text", ph:"Default.SFX",  cmds:C.concat(['ch'])},
+{cat:"Archive & Volumes", sw:"-z",   d:"Read comment from file",     type:"text", ph:"comment.txt",  cmds:C.concat(['c','ch'])},
+{cat:"Archive & Volumes", sw:"-qo",  d:"Quick open information",     type:"select", cmds:'a m mf u'.split(' '),
+ opts:[{v:"-",l:"- (disable)"},{v:"+",l:"+ (enable)"}]},
+{cat:"Archive & Volumes", sw:"-ver", d:"File version control (n)",   type:"text", ph:"3",            cmds:X},
+
+{cat:"Overwrite & Output", sw:"-o+", d:"Overwrite existing files",   type:"flag",  cmds:X},
+{cat:"Overwrite & Output", sw:"-o-", d:"Do not overwrite",           type:"flag",  cmds:X},
+{cat:"Overwrite & Output", sw:"-id", d:"Message control flags",      type:"text", ph:"c,d,n,p,q",   cmds:CXLT},
+{cat:"Overwrite & Output", sw:"-ilog",d:"Log errors to file",        type:"text", ph:"errors.log",   cmds:ALL},
+{cat:"Overwrite & Output", sw:"-log", d:"Write names to log file",   type:"text", ph:"names.log",    cmds:CX},
+{cat:"Overwrite & Output", sw:"-si",  d:"Read data from stdin (name)",type:"text", ph:"name",        cmds:['a']},
+{cat:"Overwrite & Output", sw:"-sc",  d:"Character set",             type:"text", ph:"U",            cmds:CXL},
+
+{cat:"Attributes & Links", sw:"-ac",  d:"Clear Archive attr after compress",type:"flag", cmds:C},
+{cat:"Attributes & Links", sw:"-oh",  d:"Save hard links as link",   type:"flag",  cmds:C},
+{cat:"Attributes & Links", sw:"-oi",  d:"Save identical files as refs",type:"text", ph:"0-4[:min]", cmds:C},
+{cat:"Attributes & Links", sw:"-ol",  d:"Process symbolic links as link",type:"flag", cmds:CX},
+{cat:"Attributes & Links", sw:"-ola", d:"Save absolute symlink paths",type:"flag", cmds:CX},
+{cat:"Attributes & Links", sw:"-os",  d:"Save NTFS streams",         type:"flag",  cmds:CX},
+{cat:"Attributes & Links", sw:"-ow",  d:"Save/restore file owner",   type:"flag",  cmds:CX},
+
+{cat:"System", sw:"-w",   d:"Work directory",              type:"text", ph:"C:\\Temp",       cmds:CXT},
+{cat:"System", sw:"-ri",  d:"Priority[:sleep] (0-15)",     type:"text", ph:"1:5",            cmds:ALL},
+{cat:"System", sw:"-ioff",d:"Turn off PC after operation",  type:"select", cmds:CXT,
+ opts:[{v:"0",l:"0 - No"},{v:"1",l:"1 - Shutdown"},{v:"2",l:"2 - Hibernate"},{v:"3",l:"3 - Sleep"}]},
+{cat:"System", sw:"-isnd",d:"Notification sounds",          type:"select", cmds:ALL,
+ opts:[{v:"",l:"(enable)"},{v:"-",l:"- (disable)"}]},
+{cat:"System", sw:"-dh",  d:"Open shared files",            type:"flag",  cmds:C},
+{cat:"System", sw:"-df",  d:"Delete files after archiving", type:"flag",  cmds:C},
+{cat:"System", sw:"-dw",  d:"Wipe files after archiving",   type:"flag",  cmds:C},
+{cat:"System", sw:"-as",  d:"Synchronize archive contents", type:"flag",  cmds:'a m mf u'.split(' ')},
+{cat:"System", sw:"-f",   d:"Freshen files",                type:"flag",  cmds:['a','u']},
+{cat:"System", sw:"-u",   d:"Update files",                 type:"flag",  cmds:['a']},
+{cat:"System", sw:"-ieml",d:"Send archive by email (addr)", type:"text", ph:"user@example.com", cmds:C}
+];
+
+/* ── Build UI ── */
+var cmdSel=document.getElementById('cmdSel');
+var archLbl=document.getElementById('archLbl');
+var archName=document.getElementById('archName');
+var arch2Lbl=document.getElementById('arch2Lbl');
+var arch2Name=document.getElementById('arch2Name');
+var filesLbl=document.getElementById('filesLbl');
+var filePaths=document.getElementById('filePaths');
+var destLbl=document.getElementById('destLbl');
+var destPath=document.getElementById('destPath');
+var sectionsEl=document.getElementById('sections');
+var cmdOut=document.getElementById('cmdOut');
+var copyBtn=document.getElementById('copyBtn');
+
+COMMANDS.forEach(function(c){
+  var o=document.createElement('option');
+  o.value=c.v; o.textContent=c.v+' \u2013 '+c.d;
+  cmdSel.appendChild(o);
+});
+
+var cats={};
+SWITCHES.forEach(function(s){
+  if(!cats[s.cat]) cats[s.cat]=[];
+  cats[s.cat].push(s);
+});
+
+Object.keys(cats).forEach(function(cat){
+  var det=document.createElement('details');
+  det.className='section'; det.open=true;
+  var sum=document.createElement('summary');
+  sum.textContent=cat;
+  det.appendChild(sum);
+  var body=document.createElement('div');
+  body.className='section-body';
+
+  cats[cat].forEach(function(s){
+    var row=document.createElement('div');
+    row.className='opt-row';
+    row.dataset.cmds=(s.cmds||[]).join(',');
+
+    var cb=document.createElement('input');
+    cb.type='checkbox'; cb.dataset.sw=s.sw; cb.dataset.stype=s.type;
+    cb.id='cb_'+s.sw.replace(/[^a-zA-Z0-9]/g,'_');
+
+    var lbl=document.createElement('label');
+    lbl.htmlFor=cb.id;
+    lbl.appendChild(cb);
+    var code=document.createElement('code');
+    code.textContent=s.sw;
+    lbl.appendChild(code);
+    lbl.appendChild(document.createTextNode(' '+s.d));
+    row.appendChild(lbl);
+
+    if(s.type==='text'){
+      var inp=document.createElement('input');
+      inp.type='text'; inp.placeholder=s.ph||''; inp.dataset.sw=s.sw;
+      inp.className='param'; inp.disabled=true;
+      inp.addEventListener('input',buildCmd);
+      row.appendChild(inp);
+      cb.addEventListener('change',function(){ inp.disabled=!cb.checked; buildCmd(); });
+    } else if(s.type==='select'){
+      var sel=document.createElement('select');
+      sel.dataset.sw=s.sw; sel.className='param'; sel.disabled=true;
+      (s.opts||[]).forEach(function(o){
+        var opt=document.createElement('option');
+        opt.value=o.v; opt.textContent=o.l;
+        sel.appendChild(opt);
+      });
+      sel.addEventListener('change',buildCmd);
+      row.appendChild(sel);
+      cb.addEventListener('change',function(){ sel.disabled=!cb.checked; buildCmd(); });
+    } else {
+      cb.addEventListener('change',buildCmd);
+    }
+
+    body.appendChild(row);
+  });
+
+  det.appendChild(body);
+  sectionsEl.appendChild(det);
+});
+
+cmdSel.addEventListener('change',function(){ updateFields(); filterSwitches(); buildCmd(); });
+archName.addEventListener('input',buildCmd);
+arch2Name.addEventListener('input',buildCmd);
+filePaths.addEventListener('input',buildCmd);
+destPath.addEventListener('input',buildCmd);
+
+function buildCmd(){
+  var parts=['rar'];
+  parts.push(cmdSel.value);
+
+  var cbs=document.querySelectorAll('.opt-row:not(.hidden) input[type=checkbox]');
+  cbs.forEach(function(cb){
+    if(!cb.checked) return;
+    var sw=cb.dataset.sw;
+    var stype=cb.dataset.stype;
+    if(stype==='flag'){
+      parts.push(sw);
+    } else {
+      var row=cb.closest('.opt-row');
+      var param=row.querySelector('.param');
+      var val=param?param.value.trim():'';
+      parts.push(sw+val);
+    }
+  });
+
+  var arch=archName.value.trim();
+  if(arch) parts.push(arch);
+
+  if(arch2Lbl.style.display!=='none'){
+    var a2=arch2Name.value.trim();
+    if(a2) parts.push(a2);
+  }
+
+  if(filesLbl.style.display!=='none'){
+    var fp=filePaths.value.trim();
+    if(fp) parts.push(fp);
+  }
+
+  if(destLbl.style.display!=='none'){
+    var dp=destPath.value.trim();
+    if(dp) parts.push(dp);
+  }
+
+  cmdOut.value=parts.join(' ');
+}
+
+copyBtn.addEventListener('click',function(){
+  navigator.clipboard.writeText(cmdOut.value).then(function(){
+    copyBtn.textContent='Copied!';
+    copyBtn.classList.add('copied');
+    setTimeout(function(){ copyBtn.textContent='Copy'; copyBtn.classList.remove('copied'); },1500);
+  });
+});
+
+function filterSwitches(){
+  var cmd=cmdSel.value;
+  var rows=document.querySelectorAll('.opt-row');
+  rows.forEach(function(row){
+    var cmds=row.dataset.cmds;
+    var show=!cmds||cmds.split(',').indexOf(cmd)!==-1;
+    row.classList.toggle('hidden',!show);
+    if(!show){
+      var cb=row.querySelector('input[type=checkbox]');
+      if(cb&&cb.checked){ cb.checked=false; var p=row.querySelector('.param'); if(p) p.disabled=true; }
+    }
+  });
+  document.querySelectorAll('.section').forEach(function(sec){
+    var body=sec.querySelector('.section-body');
+    var visible=body.querySelectorAll('.opt-row:not(.hidden)');
+    sec.style.display=visible.length?'':'none';
+  });
+}
+function updateFields(){
+  var f=CMD_FIELDS[cmdSel.value]||{};
+  /* archive label */
+  archLbl.childNodes[0].textContent=f.arch||'Archive name';
+  archName.placeholder=f.archPh||'archive.rar';
+  /* second archive (only for special cases) */
+  arch2Lbl.style.display='none';
+  if(f.arch2){
+    arch2Lbl.childNodes[0].textContent=f.arch2;
+    arch2Name.placeholder=f.arch2Ph||'';
+    arch2Lbl.style.display='';
+  } else { arch2Name.value=''; }
+  /* files */
+  if(f.files){
+    filesLbl.childNodes[0].textContent=f.files;
+    filePaths.placeholder=f.filesPh||'';
+    filesLbl.style.display='';
+  } else {
+    filesLbl.style.display='none';
+    filePaths.value='';
+  }
+  /* destination */
+  if(f.dest){
+    destLbl.childNodes[0].textContent=f.dest;
+    destPath.placeholder=f.destPh||'';
+    destLbl.style.display='';
+  } else {
+    destLbl.style.display='none';
+    destPath.value='';
+  }
+}
+updateFields();
+filterSwitches();
+buildCmd();
+</script>
+</body>
+</html>
