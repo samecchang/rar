@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>RAR 7.20 指令列產生器</title>
+<style>
+:root{--bg:#f4f5f9;--card:#fff;--border:#d4d8e3;--accent:#2563eb;--muted:#6b7280;--heading:#1e293b;--row:#f9fafb}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);font-family:"Segoe UI",system-ui,sans-serif;color:#111;padding:16px}
+h1{font-size:22px;color:var(--heading);margin-bottom:12px}
+.top{display:flex;flex-wrap:wrap;gap:10px;align-items:end;margin-bottom:14px}
+.top label{font-size:13px;color:var(--muted);display:flex;flex-direction:column;gap:3px}
+.top select,.top input[type=text]{padding:7px 10px;border:1px solid var(--border);border-radius:8px;font-size:14px}
+.top select{min-width:180px}
+.top input[type=text]{width:220px}
+.sections{display:flex;flex-direction:column;gap:12px;margin-bottom:14px}
+.section{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.04)}
+.section summary{padding:10px 14px;font-weight:600;font-size:14px;cursor:pointer;user-select:none;color:var(--heading);background:var(--row);list-style:none}
+.section summary::before{content:"\25B8  "}
+.section[open] summary::before{content:"\25BE  "}
+.section-body{padding:8px 14px 12px}
+.opt-row{display:flex;align-items:center;gap:8px;padding:5px 0;flex-wrap:wrap;transition:opacity .15s}
+.opt-row.hidden{display:none}
+.opt-row label{font-size:13px;cursor:pointer;display:flex;align-items:center;gap:5px;min-width:280px}
+.opt-row label code{background:#e8ecf4;padding:1px 5px;border-radius:4px;font-size:12px;color:#374151}
+.opt-row input[type=text],.opt-row select{padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px}
+.opt-row input[type=text]{width:160px}
+.cmd-box{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px;box-shadow:0 2px 8px rgba(0,0,0,.04)}
+.cmd-box textarea{width:100%;min-height:72px;border:1px solid var(--border);border-radius:8px;padding:10px;font-family:"Cascadia Code","Fira Code",monospace;font-size:14px;resize:vertical;background:#f8f9fc}
+.cmd-box .bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.cmd-box .bar span{font-weight:600;font-size:14px;color:var(--heading)}
+.btn{padding:6px 14px;border:none;border-radius:8px;font-size:13px;cursor:pointer;background:var(--accent);color:#fff}
+.btn:hover{opacity:.9}
+.copied{background:#16a34a}
+</style>
+</head>
+<body>
+<h1>RAR 7.20 指令列產生器</h1>
+
+<div class="top">
+  <label>指令
+    <select id="cmdSel"></select>
+  </label>
+  <label id="archLbl">壓縮檔名稱
+    <input type="text" id="archName" placeholder="archive.rar"/>
+  </label>
+  <label id="arch2Lbl" style="display:none">第二個壓縮檔
+    <input type="text" id="arch2Name" placeholder="archive2.rar"/>
+  </label>
+  <label id="filesLbl">檔案／路徑
+    <input type="text" id="filePaths" placeholder="*.* 或 檔案1 檔案2"/>
+  </label>
+  <label id="destLbl" style="display:none">目標路徑
+    <input type="text" id="destPath" placeholder="C:\\Output\\"/>
+  </label>
+</div>
+
+<div class="sections" id="sections"></div>
+
+<div class="cmd-box">
+  <div class="bar"><span>產生的指令</span><button class="btn" id="copyBtn">複製</button></div>
+  <textarea id="cmdOut" readonly></textarea>
+</div>
+
+<script>
+var COMMANDS=[
+  {v:"a",  d:"新增檔案到壓縮檔"},
+  {v:"c",  d:"新增壓縮檔註解"},
+  {v:"ch", d:"變更壓縮檔參數"},
+  {v:"cw", d:"將註解寫入檔案"},
+  {v:"d",  d:"自壓縮檔刪除檔案"},
+  {v:"e",  d:"解壓（不含原始路徑）"},
+  {v:"f",  d:"更新壓縮檔中的較新檔案"},
+  {v:"i",  d:"在壓縮檔中搜尋字串"},
+  {v:"k",  d:"鎖定壓縮檔"},
+  {v:"l",  d:"清單列出內容［簡要］"},
+  {v:"lt", d:"清單列出內容［技術］"},
+  {v:"lb", d:"清單列出內容［純量］"},
+  {v:"m",  d:"移動到壓縮檔"},
+  {v:"mf", d:"移動到壓縮檔（僅檔案）"},
+  {v:"p",  d:"輸出檔案到標準輸出"},
+  {v:"r",  d:"修復壓縮檔"},
+  {v:"rc", d:"重建遺失的分卷"},
+  {v:"rn", d:"重新命名壓縮檔內檔案"},
+  {v:"rr", d:"加入資料復原記錄"},
+  {v:"rv", d:"建立復原分卷"},
+  {v:"s",  d:"轉換為自解壓（SFX）"},
+  {v:"s-", d:"自解壓還原為一般壓縮檔"},
+  {v:"t",  d:"測試壓縮檔"},
+  {v:"u",  d:"更新壓縮檔內檔案"},
+  {v:"v",  d:"詳細列出內容"},
+  {v:"vt", d:"詳細列出［技術］"},
+  {v:"vb", d:"詳細列出［純量］"},
+  {v:"x",  d:"解壓（保留完整路徑）"}
+];
+
+/* ── 各指令欄位設定 ── */
+var CMD_FIELDS={
+  a:   {arch:'壓縮檔名稱',archPh:'archive.rar',         files:'檔案／路徑',filesPh:'*.* 或 檔案1 檔案2'},
+  c:   {arch:'壓縮檔名稱',archPh:'archive.rar',         files:null},
+  ch:  {arch:'壓縮檔名稱',archPh:'archive.rar',         files:null},
+  cw:  {arch:'壓縮檔名稱',archPh:'archive.rar',         files:'輸出檔',filesPh:'comment.txt'},
+  d:   {arch:'壓縮檔名稱',archPh:'archive.rar',         files:'要刪除的檔案',filesPh:'檔案1 檔案2'},
+  e:   {arch:'壓縮檔名稱',archPh:'archive.rar',         files:'檔案（選填）',filesPh:'*.doc',dest:'目標路徑',destPh:'C:\\Output\\'},
+  f:   {arch:'壓縮檔名稱',archPh:'archive.rar',         files:'檔案／路徑',filesPh:'*.* 或 檔案1 檔案2'},
+  i:   {arch:'搜尋字串',archPh:'關鍵字',                files:'壓縮檔篩選',filesPh:'*.rar'},
+  k:   {arch:'壓縮檔名稱',archPh:'archive.rar',         files:null},
+  l:   {arch:'壓縮檔名稱',archPh:'archive.rar',         files:'檔案（選填）',filesPh:'*.doc'},
+  lt:  {arch:'壓縮檔名稱',archPh:'archive.rar',         files:'檔案（選填）',filesPh:'*.doc'},
+  lb:  {arch:'壓縮檔名稱',archPh:'archive.rar',         files:'檔案（選填）',filesPh:'*.doc'},
+  m:   {arch:'壓縮檔名稱',archPh:'archive.rar',         files:'檔案／路徑',filesPh:'*.* 或 檔案1 檔案2'},
+  mf:  {arch:'壓縮檔名稱',archPh:'archive.rar',         files:'檔案／路徑',filesPh:'*.* 或 檔案1 檔案2'},
+  p:   {arch:'壓縮檔名稱',archPh:'archive.rar',         files:'檔案（選填）',filesPh:'*.doc'},
+  r:   {arch:'壓縮檔名稱',archPh:'archive.rar',         files:null},
+  rc:  {arch:'壓縮檔名稱',archPh:'archive.rar',         files:null},
+  rn:  {arch:'壓縮檔名稱',archPh:'archive.rar',         files:'舊/新 檔名配對',filesPh:'old_name new_name ...'},
+  rr:  {arch:'壓縮檔名稱',archPh:'archive.rar',         files:null},
+  rv:  {arch:'壓縮檔名稱',archPh:'archive.rar',         files:null},
+  s:   {arch:'壓縮檔名稱',archPh:'archive.rar',         files:null},
+  's-':{arch:'壓縮檔名稱',archPh:'archive.rar',         files:null},
+  t:   {arch:'壓縮檔名稱',archPh:'archive.rar',         files:'檔案（選填）',filesPh:'*.doc'},
+  u:   {arch:'壓縮檔名稱',archPh:'archive.rar',         files:'檔案／路徑',filesPh:'*.* 或 檔案1 檔案2'},
+  v:   {arch:'壓縮檔名稱',archPh:'archive.rar',         files:'檔案（選填）',filesPh:'*.doc'},
+  vt:  {arch:'壓縮檔名稱',archPh:'archive.rar',         files:'檔案（選填）',filesPh:'*.doc'},
+  vb:  {arch:'壓縮檔名稱',archPh:'archive.rar',         files:'檔案（選填）',filesPh:'*.doc'},
+  x:   {arch:'壓縮檔名稱',archPh:'archive.rar',         files:'檔案（選填）',filesPh:'*.doc',dest:'目標路徑',destPh:'C:\\Output\\'}
+};
+
+/* 群組速記 */
+var C='a m mf u f'.split(' ');
+var X='e x'.split(' ');
+var L='l lt lb v vt vb'.split(' ');
+var CX=C.concat(X);
+var CXL=CX.concat(L);
+var CXT=CX.concat(['t']);
+var CXLT=CXL.concat(['t']);
+var ALL=COMMANDS.map(function(c){return c.v;});
+
+var SWITCHES=[
+{cat:"一般", sw:"-r",   d:"遞迴處理子資料夾",            type:"flag",  cmds:CXLT.concat(['d'])},
+{cat:"一般", sw:"-r-",  d:"停用遞迴",                     type:"flag",  cmds:CXLT.concat(['d'])},
+{cat:"一般", sw:"-r0",  d:"僅萬用字元時遞迴",             type:"flag",  cmds:CXLT.concat(['d'])},
+{cat:"一般", sw:"-y",   d:"所有詢問一律視為是",           type:"flag",  cmds:CXT.concat(['d','ch'])},
+{cat:"一般", sw:"-c-",  d:"隱藏註解顯示",                 type:"flag",  cmds:X.concat(['t'])},
+{cat:"一般", sw:"-cfg-",d:"停用讀取設定檔",               type:"flag",  cmds:ALL},
+{cat:"一般", sw:"-inul",d:"隱藏所有訊息",                 type:"flag",  cmds:ALL},
+{cat:"一般", sw:"-iver",d:"顯示版本號",                   type:"flag",  cmds:ALL},
+{cat:"一般", sw:"-k",   d:"鎖定壓縮檔",                   type:"flag",  cmds:C},
+{cat:"一般", sw:"-kb",  d:"解壓失敗仍保留檔案",            type:"flag",  cmds:X},
+{cat:"一般", sw:"-or",  d:"自動重新命名檔案",             type:"flag",  cmds:X},
+{cat:"一般", sw:"-vp",  d:"每個分卷前暫停",               type:"flag",  cmds:X},
+{cat:"一般", sw:"-vn",  d:"舊式分卷命名規則",             type:"flag",  cmds:C},
+
+{cat:"壓縮", sw:"-m",  d:"壓縮等級", type:"select", cmds:C,
+ opts:[{v:"0",l:"0 - 僅儲存"},{v:"1",l:"1 - 極速"},{v:"2",l:"2 - 快速"},{v:"3",l:"3 - 一般"},{v:"4",l:"4 - 佳"},{v:"5",l:"5 - 最佳"}]},
+{cat:"壓縮", sw:"-ma", d:"壓縮格式版本", type:"select", cmds:C,
+ opts:[{v:"4",l:"4 - RAR 4"},{v:"5",l:"5 - RAR 5（預設）"},{v:"7",l:"7 - RAR 7"}]},
+{cat:"壓縮", sw:"-md", d:"字典大小（如 32m, 1g）", type:"text", ph:"32m", cmds:C},
+{cat:"壓縮", sw:"-mc", d:"進階壓縮參數", type:"text", ph:"參數", cmds:C},
+{cat:"壓縮", sw:"-mt", d:"執行緒數量",              type:"text", ph:"4",    cmds:CXT},
+{cat:"壓縮", sw:"-ms", d:"以原樣儲存的副檔名（ext;ext）",  type:"text", ph:"jpg;mp3;avi", cmds:C},
+{cat:"壓縮", sw:"-s",  d:"建立 Solid 壓縮檔",           type:"flag",  cmds:'a m mf u'.split(' ')},
+{cat:"壓縮", sw:"-ds", d:"Solid 壓縮不排序檔名",      type:"flag",  cmds:'a m mf u'.split(' ')},
+{cat:"壓縮", sw:"-en", d:"不寫入檔尾區塊",type:"flag",  cmds:'a m mf u'.split(' ')},
+{cat:"壓縮", sw:"-t",  d:"壓縮後測試檔案",     type:"flag",  cmds:C},
+
+{cat:"加密", sw:"-p",  d:"設定密碼",                     type:"text", ph:"password", cmds:CXLT.concat(['p'])},
+{cat:"加密", sw:"-hp", d:"加密資料與檔頭（密碼）",type:"text", ph:"password", cmds:CXT},
+{cat:"加密", sw:"-me", d:"加密參數",            type:"text", ph:"參數", cmds:C},
+{cat:"加密", sw:"-ht", d:"雜湊類型", type:"select", cmds:C,
+ opts:[{v:"b",l:"b - BLAKE2"},{v:"c",l:"c - CRC32"}]},
+
+{cat:"路徑與名稱", sw:"-ap", d:"設定壓縮檔內路徑",        type:"text", ph:"path\\inside", cmds:C.concat(X)},
+{cat:"路徑與名稱", sw:"-ep", d:"從名稱排除路徑",       type:"flag",  cmds:C},
+{cat:"路徑與名稱", sw:"-ep1",d:"從名稱排除基底資料夾",    type:"flag",  cmds:C},
+{cat:"路徑與名稱", sw:"-ep2",d:"展開為完整路徑",           type:"flag",  cmds:C},
+{cat:"路徑與名稱", sw:"-ep3",d:"完整路徑含磁碟代號",type:"flag",cmds:C},
+{cat:"路徑與名稱", sw:"-cl", d:"名稱轉為小寫",    type:"flag",  cmds:C},
+{cat:"路徑與名稱", sw:"-cu", d:"名稱轉為大寫",    type:"flag",  cmds:C},
+{cat:"路徑與名稱", sw:"-ad", d:"目的路徑附加壓縮檔名",type:"flag", cmds:X},
+{cat:"路徑與名稱", sw:"-ad1",d:"不建立目的資料夾前綴",type:"flag",cmds:X},
+{cat:"路徑與名稱", sw:"-ad2",d:"使用壓縮檔名子資料夾",     type:"flag",  cmds:X},
+
+{cat:"檔案篩選", sw:"-n",  d:"包含的篩選掩碼",           type:"text", ph:"*.doc",       cmds:CXLT.concat(['d'])},
+{cat:"檔案篩選", sw:"-n@", d:"自清單檔讀取包含掩碼",  type:"text", ph:"listfile.txt",cmds:CXLT.concat(['d'])},
+{cat:"檔案篩選", sw:"-x",  d:"排除的篩選掩碼",             type:"text", ph:"*.bak",       cmds:CXLT.concat(['d'])},
+{cat:"檔案篩選", sw:"-x@", d:"自清單檔讀取排除掩碼",             type:"text", ph:"excludelist.txt",cmds:CXLT.concat(['d'])},
+{cat:"檔案篩選", sw:"-ed", d:"不加入空資料夾",  type:"flag",  cmds:C},
+{cat:"檔案篩選", sw:"-e+", d:"包含指定屬性的檔案",  type:"text", ph:"attr",        cmds:C},
+{cat:"檔案篩選", sw:"-ai", d:"忽略檔案屬性",        type:"flag",  cmds:CX},
+{cat:"檔案篩選", sw:"-sl", d:"小於大小（位元組）",        type:"text", ph:"1000000",     cmds:CX},
+{cat:"檔案篩選", sw:"-sm", d:"大於大小（位元組）",        type:"text", ph:"0",           cmds:CX},
+
+{cat:"日期與時間", sw:"-ta",  d:"修改時間在之後",       type:"text", ph:"YYYYMMDDHHMMSS", cmds:CXLT.concat(['d'])},
+{cat:"日期與時間", sw:"-tb",  d:"修改時間在之前",      type:"text", ph:"YYYYMMDDHHMMSS", cmds:CXLT.concat(['d'])},
+{cat:"日期與時間", sw:"-tn",  d:"新於期間",         type:"text", ph:"15d",            cmds:CXLT.concat(['d'])},
+{cat:"日期與時間", sw:"-to",  d:"舊於期間",         type:"text", ph:"30d",            cmds:CXLT.concat(['d'])},
+{cat:"日期與時間", sw:"-ts",  d:"儲存/還原檔案時間",          type:"text", ph:"m,c,a,p",       cmds:CX},
+{cat:"日期與時間", sw:"-tk",  d:"保留原壓縮檔時間",      type:"flag",  cmds:C},
+{cat:"日期與時間", sw:"-tl",  d:"壓縮檔時間設為最新檔案", type:"flag",  cmds:C},
+{cat:"日期與時間", sw:"-ag",  d:"以日期格式產生檔名", type:"text", ph:"YYYYMMDD",      cmds:'a m mf u'.split(' ')},
+
+{cat:"壓縮檔與分卷", sw:"-v",   d:"分卷大小（如 100m）",   type:"text", ph:"100m",        cmds:'a m mf u'.split(' ')},
+{cat:"壓縮檔與分卷", sw:"-rr",  d:"復原記錄（%/sectors）",type:"text", ph:"3p",          cmds:C.concat(['ch'])},
+{cat:"壓縮檔與分卷", sw:"-rv",  d:"復原分卷數量",     type:"text", ph:"3",            cmds:C},
+{cat:"壓縮檔與分卷", sw:"-sfx", d:"建立自解模組（檔名）",   type:"text", ph:"Default.SFX",  cmds:C.concat(['ch'])},
+{cat:"壓縮檔與分卷", sw:"-z",   d:"自檔案讀取註解",     type:"text", ph:"comment.txt",  cmds:C.concat(['c','ch'])},
+{cat:"壓縮檔與分卷", sw:"-qo",  d:"快速開啟資訊",     type:"select", cmds:'a m mf u'.split(' '),
+ opts:[{v:"-",l:"-（停用）"},{v:"+",l:"+（啟用）"}]},
+{cat:"壓縮檔與分卷", sw:"-ver", d:"檔案版本控制（n）",   type:"text", ph:"3",            cmds:X},
+
+{cat:"覆寫與輸出", sw:"-o+", d:"覆寫已存在的檔案",   type:"flag",  cmds:X},
+{cat:"覆寫與輸出", sw:"-o-", d:"不要覆寫",           type:"flag",  cmds:X},
+{cat:"覆寫與輸出", sw:"-id", d:"訊息顯示控制旗標",      type:"text", ph:"c,d,n,p,q",   cmds:CXLT},
+{cat:"覆寫與輸出", sw:"-ilog",d:"將錯誤寫入檔案",        type:"text", ph:"errors.log",   cmds:ALL},
+{cat:"覆寫與輸出", sw:"-log", d:"將名稱寫入記錄檔",   type:"text", ph:"names.log",    cmds:CX},
+{cat:"覆寫與輸出", sw:"-si",  d:"自標準輸入讀取資料（名稱）",type:"text", ph:"name",        cmds:['a']},
+{cat:"覆寫與輸出", sw:"-sc",  d:"字元集",             type:"text", ph:"U",            cmds:CXL},
+
+{cat:"屬性與連結", sw:"-ac",  d:"壓縮後清除 Archive 屬性",type:"flag", cmds:C},
+{cat:"屬性與連結", sw:"-oh",  d:"儲存硬連結為連結",   type:"flag",  cmds:C},
+{cat:"屬性與連結", sw:"-oi",  d:"相同檔案以參照儲存",type:"text", ph:"0-4[:min]", cmds:C},
+{cat:"屬性與連結", sw:"-ol",  d:"將符號連結當作連結處理",type:"flag", cmds:CX},
+{cat:"屬性與連結", sw:"-ola", d:"儲存符號連結絕對路徑",type:"flag", cmds:CX},
+{cat:"屬性與連結", sw:"-os",  d:"儲存 NTFS 資料流",         type:"flag",  cmds:CX},
+{cat:"屬性與連結", sw:"-ow",  d:"儲存/還原檔案擁有者",   type:"flag",  cmds:CX},
+
+{cat:"系統", sw:"-w",   d:"工作目錄",              type:"text", ph:"C:\\Temp",       cmds:CXT},
+{cat:"系統", sw:"-ri",  d:"優先權[:sleep]（0-15）",     type:"text", ph:"1:5",            cmds:ALL},
+{cat:"系統", sw:"-ioff",d:"作業完成後關機/休眠/睡眠",  type:"select", cmds:CXT,
+ opts:[{v:"0",l:"0 - 否"},{v:"1",l:"1 - 關機"},{v:"2",l:"2 - 休眠"},{v:"3",l:"3 - 睡眠"}]},
+{cat:"系統", sw:"-isnd",d:"通知音效",          type:"select", cmds:ALL,
+ opts:[{v:"",l:"（啟用）"},{v:"-",l:"-（停用）"}]},
+{cat:"系統", sw:"-dh",  d:"開啟共用中的檔案",            type:"flag",  cmds:C},
+{cat:"系統", sw:"-df",  d:"壓縮後刪除原始檔案", type:"flag",  cmds:C},
+{cat:"系統", sw:"-dw",  d:"壓縮後抹除原始檔案",   type:"flag",  cmds:C},
+{cat:"系統", sw:"-as",  d:"同步壓縮檔內容", type:"flag",  cmds:'a m mf u'.split(' ')},
+{cat:"系統", sw:"-f",   d:"Freshen（僅較新）",                type:"flag",  cmds:['a','u']},
+{cat:"系統", sw:"-u",   d:"Update（更新模式）",                 type:"flag",  cmds:['a']},
+{cat:"系統", sw:"-ieml",d:"以電子郵件傳送壓縮檔（位址）", type:"text", ph:"user@example.com", cmds:C}
+];
+
+/* ── 產生介面 ── */
+var cmdSel=document.getElementById('cmdSel');
+var archLbl=document.getElementById('archLbl');
+var archName=document.getElementById('archName');
+var arch2Lbl=document.getElementById('arch2Lbl');
+var arch2Name=document.getElementById('arch2Name');
+var filesLbl=document.getElementById('filesLbl');
+var filePaths=document.getElementById('filePaths');
+var destLbl=document.getElementById('destLbl');
+var destPath=document.getElementById('destPath');
+var sectionsEl=document.getElementById('sections');
+var cmdOut=document.getElementById('cmdOut');
+var copyBtn=document.getElementById('copyBtn');
+
+COMMANDS.forEach(function(c){
+  var o=document.createElement('option');
+  o.value=c.v; o.textContent=c.v+' \u2013 '+c.d;
+  cmdSel.appendChild(o);
+});
+
+var cats={};
+SWITCHES.forEach(function(s){
+  if(!cats[s.cat]) cats[s.cat]=[];
+  cats[s.cat].push(s);
+});
+
+Object.keys(cats).forEach(function(cat){
+  var det=document.createElement('details');
+  det.className='section'; det.open=true;
+  var sum=document.createElement('summary');
+  sum.textContent=cat;
+  det.appendChild(sum);
+  var body=document.createElement('div');
+  body.className='section-body';
+
+  cats[cat].forEach(function(s){
+    var row=document.createElement('div');
+    row.className='opt-row';
+    row.dataset.cmds=(s.cmds||[]).join(',');
+
+    var cb=document.createElement('input');
+    cb.type='checkbox'; cb.dataset.sw=s.sw; cb.dataset.stype=s.type;
+    cb.id='cb_'+s.sw.replace(/[^a-zA-Z0-9]/g,'_');
+
+    var lbl=document.createElement('label');
+    lbl.htmlFor=cb.id;
+    lbl.appendChild(cb);
+    var code=document.createElement('code');
+    code.textContent=s.sw;
+    lbl.appendChild(code);
+    lbl.appendChild(document.createTextNode(' '+s.d));
+    row.appendChild(lbl);
+
+    if(s.type==='text'){
+      var inp=document.createElement('input');
+      inp.type='text'; inp.placeholder=s.ph||''; inp.dataset.sw=s.sw;
+      inp.className='param'; inp.disabled=true;
+      inp.addEventListener('input',buildCmd);
+      row.appendChild(inp);
+      cb.addEventListener('change',function(){ inp.disabled=!cb.checked; buildCmd(); });
+    } else if(s.type==='select'){
+      var sel=document.createElement('select');
+      sel.dataset.sw=s.sw; sel.className='param'; sel.disabled=true;
+      (s.opts||[]).forEach(function(o){
+        var opt=document.createElement('option');
+        opt.value=o.v; opt.textContent=o.l;
+        sel.appendChild(opt);
+      });
+      sel.addEventListener('change',buildCmd);
+      row.appendChild(sel);
+      cb.addEventListener('change',function(){ sel.disabled=!cb.checked; buildCmd(); });
+    } else {
+      cb.addEventListener('change',buildCmd);
+    }
+
+    body.appendChild(row);
+  });
+
+  det.appendChild(body);
+  sectionsEl.appendChild(det);
+});
+
+cmdSel.addEventListener('change',function(){ updateFields(); filterSwitches(); buildCmd(); });
+archName.addEventListener('input',buildCmd);
+arch2Name.addEventListener('input',buildCmd);
+filePaths.addEventListener('input',buildCmd);
+destPath.addEventListener('input',buildCmd);
+
+function buildCmd(){
+  var parts=['rar'];
+  parts.push(cmdSel.value);
+
+  var cbs=document.querySelectorAll('.opt-row:not(.hidden) input[type=checkbox]');
+  cbs.forEach(function(cb){
+    if(!cb.checked) return;
+    var sw=cb.dataset.sw;
+    var stype=cb.dataset.stype;
+    if(stype==='flag'){
+      parts.push(sw);
+    } else {
+      var row=cb.closest('.opt-row');
+      var param=row.querySelector('.param');
+      var val=param?param.value.trim():'';
+      parts.push(sw+val);
+    }
+  });
+
+  var arch=archName.value.trim();
+  if(arch) parts.push(arch);
+
+  if(arch2Lbl.style.display!=='none'){
+    var a2=arch2Name.value.trim();
+    if(a2) parts.push(a2);
+  }
+
+  if(filesLbl.style.display!=='none'){
+    var fp=filePaths.value.trim();
+    if(fp) parts.push(fp);
+  }
+
+  if(destLbl.style.display!=='none'){
+    var dp=destPath.value.trim();
+    if(dp) parts.push(dp);
+  }
+
+  cmdOut.value=parts.join(' ');
+}
+
+copyBtn.addEventListener('click',function(){
+  navigator.clipboard.writeText(cmdOut.value).then(function(){
+    copyBtn.textContent='已複製！';
+    copyBtn.classList.add('copied');
+    setTimeout(function(){ copyBtn.textContent='複製'; copyBtn.classList.remove('copied'); },1500);
+  });
+});
+
+function filterSwitches(){
+  var cmd=cmdSel.value;
+  var rows=document.querySelectorAll('.opt-row');
+  rows.forEach(function(row){
+    var cmds=row.dataset.cmds;
+    var show=!cmds||cmds.split(',').indexOf(cmd)!==-1;
+    row.classList.toggle('hidden',!show);
+    if(!show){
+      var cb=row.querySelector('input[type=checkbox]');
+      if(cb&&cb.checked){ cb.checked=false; var p=row.querySelector('.param'); if(p) p.disabled=true; }
+    }
+  });
+  document.querySelectorAll('.section').forEach(function(sec){
+    var body=sec.querySelector('.section-body');
+    var visible=body.querySelectorAll('.opt-row:not(.hidden)');
+    sec.style.display=visible.length?'':'none';
+  });
+}
+function updateFields(){
+  var f=CMD_FIELDS[cmdSel.value]||{};
+  /* archive label */
+  archLbl.childNodes[0].textContent=f.arch||'壓縮檔名稱';
+  archName.placeholder=f.archPh||'archive.rar';
+  /* second archive (only for special cases) */
+  arch2Lbl.style.display='none';
+  if(f.arch2){
+    arch2Lbl.childNodes[0].textContent=f.arch2;
+    arch2Name.placeholder=f.arch2Ph||'';
+    arch2Lbl.style.display='';
+  } else { arch2Name.value=''; }
+  /* files */
+  if(f.files){
+    filesLbl.childNodes[0].textContent=f.files;
+    filePaths.placeholder=f.filesPh||'';
+    filesLbl.style.display='';
+  } else {
+    filesLbl.style.display='none';
+    filePaths.value='';
+  }
+  /* destination */
+  if(f.dest){
+    destLbl.childNodes[0].textContent=f.dest;
+    destPath.placeholder=f.destPh||'';
+    destLbl.style.display='';
+  } else {
+    destLbl.style.display='none';
+    destPath.value='';
+  }
+}
+updateFields();
+filterSwitches();
+buildCmd();
+</script>
+</body>
+</html>
